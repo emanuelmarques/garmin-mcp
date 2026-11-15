@@ -1,36 +1,40 @@
 # Garmin MCP
 
-Servidor MCP remoto (Vercel) que dá ao Claude e ao ChatGPT acesso **só de leitura** aos teus dados do Garmin Connect, com foco em histórico (tendências de sono, HRV, passos, peso, atividades…). Usa a [Personal API da Garmin](https://developer.garmin.com/gc-developer-program/personal/personal-api). Uso pessoal: um único utilizador.
+A remote MCP server (hosted on Vercel) that gives Claude and ChatGPT **read-only** access to your Garmin Connect data, focused on history (trends in sleep, HRV, steps, weight, activities…). It uses the [Garmin Personal API](https://developer.garmin.com/gc-developer-program/personal/personal-api). Personal use only: a single user.
 
-Design: [docs/superpowers/specs/2026-11-15-garmin-mcp-design.md](docs/superpowers/specs/2026-11-15-garmin-mcp-design.md)
+Design: [docs/superpowers/specs/2026-11-15-garmin-mcp-design.md](docs/superpowers/specs/2026-11-15-garmin-mcp-design.md) (written in Portuguese)
 
-## 1. Antes de publicar: correr o spike (importante)
+## 1. Verified against a real account
 
-Os endpoints de saúde e atividades foram escritos a partir da lista do Swagger; formatos de resposta, tamanhos máximos de intervalo e nomes de parâmetros ainda **não foram verificados** com a tua conta. Corre uma vez, no teu terminal:
+The health and activity endpoints were written from Garmin's Swagger list and then checked against a real Garmin account: profile, steps, sleep, HRV, stress, Body Battery, weight, the activity list and summaries, and the daily summary all returned data. Hydration returned none for that account. Other accounts may differ, for example in the maximum range each endpoint accepts or in the response fields.
+
+To re-check the response shapes against your own account, run this once in your terminal (it makes no changes):
 
 ```powershell
-$env:GARMIN_API_KEY="<a tua chave Garmin>"; npm run spike
+$env:GARMIN_API_KEY="<your Garmin key>"; npm run spike
 ```
 
-Isto cria `docs/garmin-api-findings.md` (só formas das respostas, sem valores pessoais). Depois ajusta `src/lib/garmin/metrics.ts` (`path`, `query`, `maxDays`, `extract`) e `src/lib/tools/activities.ts` / `details.ts` (parâmetros marcados `UNVERIFIED`) ao que o spike mostrar.
+It writes `docs/garmin-api-findings.md` (response shapes only, no personal values). If something differs, adjust `src/lib/garmin/metrics.ts` (`path`, `query`, `maxDays`, `extract`) and `src/lib/tools/activities.ts` / `details.ts` (parameters marked `UNVERIFIED`).
 
-## 2. Variáveis de ambiente
+## 2. Environment variables
 
-| Variável | O que é |
+| Variable | What it is |
 |---|---|
-| `GARMIN_API_KEY` | Chave de https://connect.garmin.com/app/settings/personalApiToken |
-| `ACCESS_KEY` | Palavra-passe do login OAuth, **mínimo 20 caracteres** aleatórios (é a defesa principal) |
-| `ALLOWED_REDIRECT_HOSTS` | Recomendado: ex. `claude.ai,claude.com,chatgpt.com`. Sem isto, qualquer um pode registar um cliente a apontar para o seu site e tentar enganar-te na página de login |
-| `SIGNING_SECRET` | Segredo para assinar tokens, ≥ 32 caracteres aleatórios |
-| `GARMIN_KEY_EXPIRES` | Opcional, `YYYY-MM-DD`: avisa 14 dias antes de a chave expirar |
+| `GARMIN_API_KEY` | Key from https://connect.garmin.com/app/settings/personalApiToken |
+| `ACCESS_KEY` | Password for the OAuth login, **at least 20 random characters** (this is your main defense) |
+| `ALLOWED_REDIRECT_HOSTS` | Recommended, e.g. `claude.ai,claude.com,chatgpt.com`. Without it, anyone can register a client pointing at their own site and try to trick you on the login page |
+| `SIGNING_SECRET` | Secret used to sign tokens, at least 32 random characters |
+| `GARMIN_KEY_EXPIRES` | Optional, `YYYY-MM-DD`: warns 14 days before your Garmin key expires |
 
-Gerar um segredo aleatório:
+Generate a random secret:
 
 ```bash
 node -e "console.log(require('crypto').randomBytes(32).toString('base64url'))"
 ```
 
-## 3. Publicar no Vercel
+Never put real values in `.env.example`. For local runs use `.env.local`, which git ignores.
+
+## 3. Deploy to Vercel
 
 ```bash
 npm i -g vercel
@@ -38,32 +42,33 @@ vercel link
 vercel env add GARMIN_API_KEY production
 vercel env add ACCESS_KEY production
 vercel env add SIGNING_SECRET production
+vercel env add ALLOWED_REDIRECT_HOSTS production
 vercel --prod
 ```
 
-Não ativar "Deployment Protection" para o URL de produção: bloquearia os clientes remotos que precisam de alcançar `/authorize`, `/token` e `/mcp`.
+Do not enable "Deployment Protection" on the production URL: it would block the remote clients that need to reach `/authorize`, `/token` and `/mcp`.
 
-## 4. Ligar os clientes
+## 4. Connect your clients
 
-O endpoint MCP é `https://<o-teu-projeto>.vercel.app/mcp`. Na primeira ligação abre-se uma página do teu servidor: introduz o `ACCESS_KEY` uma vez.
+The MCP endpoint is `https://<your-project>.vercel.app/mcp`. The first time you connect, a page on your own server opens: enter your `ACCESS_KEY` once.
 
-- **Claude Code:** `claude mcp add --transport http garmin https://<o-teu-projeto>.vercel.app/mcp` e depois `/mcp` para autenticar.
-- **claude.ai / desktop / telemóvel:** Definições → Conectores → Adicionar conector personalizado → o URL acima.
-- **ChatGPT:** Definições → Conectores → modo de programador → adicionar um servidor MCP remoto com o URL acima (autenticação OAuth).
+- **Claude Code:** `claude mcp add --transport http garmin https://<your-project>.vercel.app/mcp`, then run `/mcp` to authenticate.
+- **claude.ai / desktop / mobile:** Settings → Connectors → Add custom connector → the URL above.
+- **ChatGPT:** Settings → Connectors → developer mode → add a remote MCP server with the URL above (OAuth authentication).
 
-## Ferramentas
+## Tools
 
-`get_health_series`, `get_activities_summary`, `list_activities`, `get_activity`, `get_daily_summary`, `get_profile` (todas só de leitura).
+`get_health_series`, `get_activities_summary`, `list_activities`, `get_activity`, `get_daily_summary`, `get_profile` (all read-only).
 
-## Notas de segurança e limites
+## Security notes and limits
 
-- Chave da Garmin, `ACCESS_KEY` e `SIGNING_SECRET` só existem como variáveis de ambiente.
-- Os códigos de login são de uso único **apenas dentro da mesma instância** e duram 5 minutos, protegidos por PKCE; o limite de tentativas também é por instância em memória (fraco em serverless), por isso o `ACCESS_KEY` tem de ser forte. Para garantias estritas, implementa a interface `Store` (`src/lib/auth/store.ts`) com Redis/KV.
-- URLs antigos de implementações (`*.vercel.app` por deploy) continuam a servir o código antigo com as mesmas variáveis; apaga implementações antigas ou protege os URLs que não são de produção.
-- Rodar `SIGNING_SECRET` invalida todas as sessões. Quando a chave da Garmin expirar, gera outra e atualiza `GARMIN_API_KEY` (e `GARMIN_KEY_EXPIRES`).
-- Plano assumido: Hobby. Pedidos muito longos devolvem resultado parcial com `reachedDate`.
+- The Garmin key, `ACCESS_KEY` and `SIGNING_SECRET` exist only as environment variables.
+- Login codes are single-use **only within the same instance** and last 5 minutes, protected by PKCE. The login attempt limit is also per instance, in memory (weak on serverless), so `ACCESS_KEY` must be strong. For strict guarantees, implement the `Store` interface (`src/lib/auth/store.ts`) with Redis/KV.
+- Old per-deployment URLs (`*.vercel.app`) keep serving the old code with the same variables; delete old deployments or protect the non-production URLs.
+- Rotating `SIGNING_SECRET` invalidates all sessions. When your Garmin key expires, generate a new one and update `GARMIN_API_KEY` (and `GARMIN_KEY_EXPIRES`).
+- Assumed plan: Hobby. Very long requests return a partial result with `reachedDate`.
 
-## Desenvolvimento
+## Development
 
 ```bash
 npm install
